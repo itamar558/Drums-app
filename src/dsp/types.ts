@@ -1,15 +1,16 @@
 export type DrumVoice = 'kick' | 'snare' | 'hihat' | 'crash';
 
-export interface BandEnergy {
-  low: number;
-  mid: number;
-  high: number;
-}
-
 export interface OnsetEvent {
   time: number;
+  /** Peak of the rising-edge derivative; used for within-band peak-picking. */
   strength: number;
-  bands: BandEnergy;
+  /**
+   * Peak envelope (loudness) amplitude shortly after the onset. Unlike
+   * `strength`, this is comparable across bands with different decay
+   * characteristics, so it's what cross-band "is this a real simultaneous
+   * hit or just leakage" comparisons should use.
+   */
+  peakEnvelope: number;
 }
 
 export interface ClassifiedHit {

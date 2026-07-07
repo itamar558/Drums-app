@@ -1,9 +1,8 @@
+import { median } from './util';
 import type { TempoInfo } from './types';
 
 const MIN_BPM = 60;
 const MAX_BPM = 200;
-const MIN_IOI_SEC = 0.05;
-const MAX_IOI_SEC = 2.5;
 
 /** Folds a candidate BPM into [MIN_BPM, MAX_BPM] by doubling/halving. */
 function foldBpm(bpm: number): number {
@@ -14,9 +13,39 @@ function foldBpm(bpm: number): number {
 }
 
 /**
- * Estimates BPM from a histogram of inter-onset intervals (folded to a
- * common octave), then finds the sixteenth-note grid phase that best
- * aligns with the observed onsets.
+ * For a candidate sixteenth-note duration, finds the phase offset in
+ * [0, sixteenth) that best aligns the grid to the given onsets, and
+ * returns that offset along with the total quantization error (sum of
+ * fractional-slot deviations across all onsets).
+ */
+function bestPhaseFor(sorted: number[], sixteenth: number, steps: number): { offset: number; error: number } {
+  let bestOffset = 0;
+  let bestError = Infinity;
+  for (let s = 0; s < steps; s++) {
+    const candidateOffset = sorted[0] - (s / steps) * sixteenth;
+    let error = 0;
+    for (const t of sorted) {
+      const rel = (t - candidateOffset) / sixteenth;
+      error += Math.abs(rel - Math.round(rel));
+    }
+    if (error < bestError) {
+      bestError = error;
+      bestOffset = candidateOffset;
+    }
+  }
+  return { offset: bestOffset, error: bestError };
+}
+
+/**
+ * Estimates BPM and the sixteenth-note grid phase by directly searching
+ * candidate tempos and scoring each by how well the observed onsets land
+ * on that tempo's grid (coarse-to-fine, then refining phase precisely at
+ * the winning tempo). This avoids the classic inter-onset-interval-
+ * histogram approach's failure mode: folding a half-beat (8th-note)
+ * interval to "one beat" by halving its implied BPM amplifies ordinary
+ * hop-quantization jitter into a bimodal split across two adjacent (and
+ * both wrong) integer BPM bins, so the histogram's peak can land on
+ * neither the true tempo.
  */
 export function estimateTempo(onsetTimes: number[]): TempoInfo {
   if (onsetTimes.length < 2) {
@@ -24,45 +53,57 @@ export function estimateTempo(onsetTimes: number[]): TempoInfo {
   }
 
   const sorted = [...onsetTimes].sort((a, b) => a - b);
-  const bpmVotes = new Map<number, number>();
 
+  // A rough prior from the median inter-onset interval, used only to break
+  // ties among grid-search candidates that fit the data equally well (e.g.
+  // a plain quarter-note click track aligns just as perfectly to a grid at
+  // half or double that tempo -- there's nothing in the data to prefer one,
+  // so fall back to the simplest reading of the actual note spacing).
+  const iois: number[] = [];
   for (let i = 0; i < sorted.length - 1; i++) {
     const ioi = sorted[i + 1] - sorted[i];
-    if (ioi < MIN_IOI_SEC || ioi > MAX_IOI_SEC) continue;
-    const bpm = Math.round(foldBpm(60 / ioi));
-    bpmVotes.set(bpm, (bpmVotes.get(bpm) ?? 0) + 1);
+    if (ioi > 0.05 && ioi < 2.5) iois.push(ioi);
+  }
+  const priorBpm = iois.length > 0 ? foldBpm(60 / median(iois)) : 120;
+
+  const coarseErrors = new Map<number, number>();
+  let bestError = Infinity;
+  for (let bpm = MIN_BPM; bpm <= MAX_BPM; bpm += 0.5) {
+    const sixteenth = 60 / bpm / 4;
+    const { error } = bestPhaseFor(sorted, sixteenth, 12);
+    coarseErrors.set(bpm, error);
+    if (error < bestError) bestError = error;
   }
 
+  // Among candidates that fit the data almost as well as the best one,
+  // prefer whichever is closest to the simple median-IOI prior.
+  const TOLERANCE = bestError * 0.03 + 1e-6;
   let bestBpm = 120;
-  let bestVotes = -1;
-  for (const [bpm, votes] of bpmVotes) {
-    if (votes > bestVotes) {
-      bestVotes = votes;
+  let bestPriorDistance = Infinity;
+  for (const [bpm, error] of coarseErrors) {
+    if (error > bestError + TOLERANCE) continue;
+    const priorDistance = Math.abs(bpm - priorBpm);
+    if (priorDistance < bestPriorDistance) {
+      bestPriorDistance = priorDistance;
       bestBpm = bpm;
     }
   }
 
-  const beatDuration = 60 / bestBpm;
-  const sixteenth = beatDuration / 4;
-
-  // Find the grid phase offset in [0, sixteenth) that minimizes total
-  // quantization error of all onsets against the sixteenth-note grid.
-  const STEPS = 32;
-  let bestOffset = 0;
-  let bestError = Infinity;
-  for (let s = 0; s < STEPS; s++) {
-    const candidateOffset = sorted[0] - (s / STEPS) * sixteenth;
-    let error = 0;
-    for (const t of sorted) {
-      const rel = (t - candidateOffset) / sixteenth;
-      const nearest = Math.round(rel);
-      error += Math.abs(rel - nearest);
-    }
+  // Refine finely around the coarse winner (tempo and phase together).
+  let refinedBpm = bestBpm;
+  bestError = Infinity;
+  for (let bpm = bestBpm - 0.5; bpm <= bestBpm + 0.5; bpm += 0.02) {
+    const sixteenth = 60 / bpm / 4;
+    const { error } = bestPhaseFor(sorted, sixteenth, 48);
     if (error < bestError) {
       bestError = error;
-      bestOffset = candidateOffset;
+      refinedBpm = bpm;
     }
   }
 
-  return { bpm: bestBpm, beatDuration, gridOffset: bestOffset };
+  const beatDuration = 60 / refinedBpm;
+  const sixteenth = beatDuration / 4;
+  const { offset: gridOffset } = bestPhaseFor(sorted, sixteenth, 48);
+
+  return { bpm: refinedBpm, beatDuration, gridOffset };
 }

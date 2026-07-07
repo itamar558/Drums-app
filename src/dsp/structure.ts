@@ -4,7 +4,6 @@ import type { Measure, Section } from './types';
 const FILL_HISTORY_WINDOW = 8;
 const FILL_RATIO_THRESHOLD = 1.8;
 const FILL_MIN_MARGIN = 3;
-const MAX_SECTION_PATTERNS = 2;
 
 function density(measure: Measure): number {
   return measure.slots.filter((s) => s.voices.length > 0).length;
@@ -41,24 +40,50 @@ export function detectFills(measures: Measure[]): Measure[] {
 export function groupSections(measures: Measure[]): Section[] {
   if (measures.length === 0) return [];
 
-  type RawSection = { measures: Measure[]; patterns: string[] };
+  type RawSection = { measures: Measure[]; primary: string | null; secondary: string | null };
   const raw: RawSection[] = [];
 
-  for (const m of measures) {
+  const isPatternMeasure = (m: Measure) => !m.isFill && m.patternKey !== '';
+
+  // Pattern of the next real (non-fill, non-empty) measure after `fromIndex`,
+  // used to tell "one-off variant bar that returns to the groove" (stays in
+  // the current section) apart from "the groove has actually changed" (a new
+  // section starts here).
+  function nextPattern(fromIndex: number): string | null {
+    for (let j = fromIndex; j < measures.length; j++) {
+      if (isPatternMeasure(measures[j])) return measures[j].patternKey;
+    }
+    return null;
+  }
+
+  for (let i = 0; i < measures.length; i++) {
+    const m = measures[i];
     const current = raw[raw.length - 1];
+
     if (!current) {
-      raw.push({ measures: [m], patterns: m.isFill || m.patternKey === '' ? [] : [m.patternKey] });
+      raw.push({ measures: [m], primary: isPatternMeasure(m) ? m.patternKey : null, secondary: null });
       continue;
     }
-    if (m.isFill || m.patternKey === '') {
+    if (!isPatternMeasure(m)) {
       current.measures.push(m);
       continue;
     }
-    if (current.patterns.includes(m.patternKey) || current.patterns.length < MAX_SECTION_PATTERNS) {
+    if (current.primary === null) {
+      current.primary = m.patternKey;
       current.measures.push(m);
-      if (!current.patterns.includes(m.patternKey)) current.patterns.push(m.patternKey);
+      continue;
+    }
+    if (m.patternKey === current.primary || m.patternKey === current.secondary) {
+      current.measures.push(m);
+      continue;
+    }
+
+    const looksBackAtPrimary = current.secondary === null && nextPattern(i + 1) === current.primary;
+    if (looksBackAtPrimary) {
+      current.secondary = m.patternKey;
+      current.measures.push(m);
     } else {
-      raw.push({ measures: [m], patterns: [m.patternKey] });
+      raw.push({ measures: [m], primary: m.patternKey, secondary: null });
     }
   }
 
@@ -67,7 +92,7 @@ export function groupSections(measures: Measure[]): Section[] {
   let nextLetterCode = 'A'.charCodeAt(0);
 
   return raw.map((section): Section => {
-    const signature = [...section.patterns].sort().join(';');
+    const signature = [section.primary, section.secondary].filter((p): p is string => !!p).sort().join(';');
     let letter = letterForSignature.get(signature);
     if (letter === undefined) {
       letter = signature === '' ? '-' : String.fromCharCode(nextLetterCode++);

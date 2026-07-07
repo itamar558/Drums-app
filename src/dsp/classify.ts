@@ -1,36 +1,38 @@
-import type { ClassifiedHit, DrumVoice, OnsetEvent } from './types';
+import type { BandOnsets } from './onsets';
+import type { ClassifiedHit, DrumVoice } from './types';
 import { median } from './util';
 
-const KICK_LOW_FRACTION = 0.45;
-const CYMBAL_HIGH_FRACTION = 0.5;
-const CRASH_STRENGTH_MULTIPLIER = 2.2;
+const CRASH_ENVELOPE_MULTIPLIER = 2.2;
 
 /**
- * Voice heuristic: kick = low-frequency energy dominates the onset frame;
- * hi-hat/crash = high-frequency energy dominates; everything else is treated
- * as snare (broadband transient + mid/high noise from the snare wires).
- * Among the high-frequency group, unusually loud/sustained hits are labeled
- * crash rather than hi-hat.
+ * Labels each band's independently-detected onsets with a drum voice. Kick
+ * and snare onsets map directly; the high band is shared by hi-hat and
+ * crash cymbal, split by loudness relative to the high band's own median
+ * (crashes ring out much louder/longer than hi-hat taps). Each band was
+ * already thresholded independently against its own adaptive baseline (see
+ * onsets.ts), so a hit doesn't need to "win" against the other bands here --
+ * that's what correctly keeps simultaneous kick + hi-hat hits as two
+ * separate voices instead of collapsing to whichever is louder.
  */
-export function classifyOnsets(onsets: OnsetEvent[]): ClassifiedHit[] {
-  if (onsets.length === 0) return [];
-  const maxStrength = Math.max(...onsets.map((o) => o.strength)) || 1;
-  const medianStrength = median(onsets.map((o) => o.strength)) || 1;
+export function classifyBandOnsets(bandOnsets: BandOnsets): ClassifiedHit[] {
+  const highMedianEnvelope = median(bandOnsets.high.map((o) => o.peakEnvelope)) || 1;
+  const kickMax = Math.max(1e-12, ...bandOnsets.kick.map((o) => o.peakEnvelope));
+  const snareMax = Math.max(1e-12, ...bandOnsets.snare.map((o) => o.peakEnvelope));
+  const highMax = Math.max(1e-12, ...bandOnsets.high.map((o) => o.peakEnvelope));
 
-  return onsets.map((onset) => {
-    const { low, high } = onset.bands;
-    let voice: DrumVoice;
-    if (low >= KICK_LOW_FRACTION && low >= high) {
-      voice = 'kick';
-    } else if (high >= CYMBAL_HIGH_FRACTION) {
-      voice = onset.strength >= medianStrength * CRASH_STRENGTH_MULTIPLIER ? 'crash' : 'hihat';
-    } else {
-      voice = 'snare';
-    }
-    return {
-      time: onset.time,
-      voice,
-      velocity: Math.min(1, onset.strength / maxStrength),
-    };
-  });
+  const hits: ClassifiedHit[] = [
+    ...bandOnsets.kick.map((o) => ({ time: o.time, voice: 'kick' as DrumVoice, velocity: o.peakEnvelope / kickMax })),
+    ...bandOnsets.snare.map((o) => ({
+      time: o.time,
+      voice: 'snare' as DrumVoice,
+      velocity: o.peakEnvelope / snareMax,
+    })),
+    ...bandOnsets.high.map((o) => {
+      const voice: DrumVoice = o.peakEnvelope >= highMedianEnvelope * CRASH_ENVELOPE_MULTIPLIER ? 'crash' : 'hihat';
+      return { time: o.time, voice, velocity: o.peakEnvelope / highMax };
+    }),
+  ];
+
+  hits.sort((a, b) => a.time - b.time);
+  return hits;
 }
