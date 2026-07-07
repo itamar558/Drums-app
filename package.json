@@ -18,6 +18,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^26.1.0",
     "@types/react": "~19.2.2",
+    "esbuild": "^0.28.1",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.11",
     "typescript": "~6.0.3"
@@ -27,7 +28,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "test": "jest"
+    "test": "jest",
+    "build:webview": "node scripts/build-webview-bundle.mjs"
   },
   "private": true
 }
