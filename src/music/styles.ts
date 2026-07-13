@@ -21,6 +21,12 @@ interface PatternCtx {
   nextChord: ChordSpec;
 }
 
+/** Which synthesized instrument comps the chord pattern. */
+export type ChordInstrument = "guitar-clean" | "guitar-dist" | "keys-piano" | "keys-organ";
+
+/** Plucked-string voicing used for the bass line. */
+export type BassTone = "picked" | "fingered" | "upright";
+
 export interface Style {
   id: string;
   name: string;
@@ -31,9 +37,14 @@ export interface Style {
   swingSubdivision: string;
   bassOctave: number;
   chordOctave: number;
+  chordInstrument: ChordInstrument;
+  bassTone: BassTone;
+  hornOctave: number;
   progression: ChordSpec[];
   bassPattern: (ctx: PatternCtx) => BassStep[];
   chordPattern: (ctx: PatternCtx) => CompStep[];
+  /** Optional brass stab layer, only set for horn-driven styles. */
+  hornPattern?: (ctx: PatternCtx) => CompStep[];
 }
 
 function chord(rootOffset: number, quality: ChordQuality, label: string): ChordSpec {
@@ -54,6 +65,9 @@ const STYLES: Style[] = [
     swingSubdivision: "8n",
     bassOctave: 2,
     chordOctave: 3,
+    chordInstrument: "guitar-dist",
+    bassTone: "picked",
+    hornOctave: 4,
     progression: [chord(I, "maj", "I"), chord(IV, "maj", "IV"), chord(V, "maj", "V"), chord(IV, "maj", "IV")],
     bassPattern: () => [
       { step: 0, semitone: 0, duration: "8n", velocity: 0.9 },
@@ -80,6 +94,9 @@ const STYLES: Style[] = [
     swingSubdivision: "16n",
     bassOctave: 2,
     chordOctave: 3,
+    chordInstrument: "guitar-clean",
+    bassTone: "picked",
+    hornOctave: 4,
     progression: [chord(I, "7", "I7"), chord(I, "7", "I7"), chord(IV, "7", "IV7"), chord(I, "7", "I7")],
     bassPattern: () => [
       { step: 0, semitone: 0, duration: "16n", velocity: 1.0 },
@@ -95,6 +112,10 @@ const STYLES: Style[] = [
       { step: 9, duration: "16n", velocity: 0.65 },
       { step: 14, duration: "16n", velocity: 0.5 },
     ],
+    hornPattern: () => [
+      { step: 0, duration: "16n", velocity: 0.85 },
+      { step: 10, duration: "16n", velocity: 0.7 },
+    ],
   },
   {
     id: "blues",
@@ -106,6 +127,9 @@ const STYLES: Style[] = [
     swingSubdivision: "8n",
     bassOctave: 2,
     chordOctave: 3,
+    chordInstrument: "guitar-clean",
+    bassTone: "fingered",
+    hornOctave: 4,
     progression: [
       chord(I, "7", "I7"), chord(I, "7", "I7"), chord(I, "7", "I7"), chord(I, "7", "I7"),
       chord(IV, "7", "IV7"), chord(IV, "7", "IV7"), chord(I, "7", "I7"), chord(I, "7", "I7"),
@@ -124,6 +148,8 @@ const STYLES: Style[] = [
       { step: 4, duration: "8n", velocity: 0.4 },
       { step: 12, duration: "8n", velocity: 0.4 },
     ],
+    hornPattern: (ctx) =>
+      ctx.bar % 4 === 3 ? [{ step: 8, duration: "8n", velocity: 0.8 }] : [],
   },
   {
     id: "jazz",
@@ -135,6 +161,9 @@ const STYLES: Style[] = [
     swingSubdivision: "8n",
     bassOctave: 2,
     chordOctave: 4,
+    chordInstrument: "keys-piano",
+    bassTone: "upright",
+    hornOctave: 5,
     progression: [chord(ii, "min7", "ii7"), chord(V, "7", "V7"), chord(I, "maj7", "Imaj7"), chord(vi, "min7", "vi7")],
     bassPattern: ({ nextChord, chord: c }) => {
       const approach = nextChord.rootOffset - c.rootOffset - 1;
@@ -160,6 +189,9 @@ const STYLES: Style[] = [
     swingSubdivision: "8n",
     bassOctave: 2,
     chordOctave: 3,
+    chordInstrument: "keys-organ",
+    bassTone: "fingered",
+    hornOctave: 4,
     progression: [chord(I, "maj", "I"), chord(IV, "maj", "IV"), chord(V, "maj", "V"), chord(I, "maj", "I")],
     bassPattern: () => [
       { step: 8, semitone: 0, duration: "8n", velocity: 0.9 },
@@ -182,6 +214,9 @@ const STYLES: Style[] = [
     swingSubdivision: "16n",
     bassOctave: 2,
     chordOctave: 4,
+    chordInstrument: "guitar-clean",
+    bassTone: "upright",
+    hornOctave: 5,
     progression: [chord(I, "maj7", "Imaj7"), chord(ii, "min7", "ii7"), chord(V, "7", "V7"), chord(I, "maj7", "Imaj7")],
     bassPattern: () => [
       { step: 0, semitone: 0, duration: "8n", velocity: 0.8 },
@@ -207,6 +242,9 @@ const STYLES: Style[] = [
     swingSubdivision: "16n",
     bassOctave: 1,
     chordOctave: 2,
+    chordInstrument: "guitar-dist",
+    bassTone: "picked",
+    hornOctave: 3,
     progression: [chord(I, "5", "i5"), chord(bVI, "5", "bVI5"), chord(bVII, "5", "bVII5"), chord(I, "5", "i5")],
     bassPattern: () => [
       { step: 0, semitone: 0, duration: "16n", velocity: 1.0 },
@@ -231,6 +269,9 @@ const STYLES: Style[] = [
     swingSubdivision: "8n",
     bassOctave: 2,
     chordOctave: 4,
+    chordInstrument: "keys-piano",
+    bassTone: "fingered",
+    hornOctave: 5,
     progression: [chord(I, "maj", "I"), chord(V, "maj", "V"), chord(vi, "min", "vi"), chord(IV, "maj", "IV")],
     bassPattern: () => [
       { step: 0, semitone: 0, duration: "4n", velocity: 0.85 },
