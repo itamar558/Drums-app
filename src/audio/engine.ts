@@ -2,10 +2,12 @@ import * as Tone from "tone";
 import { bassNoteString, chordNoteStrings, type NoteName } from "../music/theory";
 import type { Style } from "../music/styles";
 import { audioBufferToWav } from "./wav";
+import { DEFAULT_METER, scaleDurationSixteenths, scaleStep, type MeterOption } from "../music/meter";
 
 interface PlayOptions {
   metronome: boolean;
   countIn: boolean;
+  meter?: MeterOption;
   onChordChange?: (barIndex: number, label: string) => void;
 }
 
@@ -15,8 +17,7 @@ export class DrumlessEngine {
   private chordSynth: Tone.PolySynth<Tone.Synth> | null = null;
   private clickSynth: Tone.MembraneSynth | null = null;
   private part: Tone.Part | null = null;
-  private countInEventId: number | null = null;
-  private metronomeLoop: Tone.Loop | null = null;
+  private metronomePart: Tone.Part | null = null;
   private recorder: Tone.Recorder | null = null;
   private ready = false;
   private metronomeEnabled = false;
@@ -53,16 +54,18 @@ export class DrumlessEngine {
     this.ready = true;
   }
 
-  private buildEvents(style: Style, keyRoot: NoteName) {
+  private buildEvents(style: Style, keyRoot: NoteName, meter: MeterOption) {
     const events: {
       time: string;
       type: "bass" | "chord" | "marker";
       notes: string[];
-      duration: string;
+      duration: number;
       velocity: number;
       bar?: number;
       label?: string;
     }[] = [];
+
+    const sixteenthSeconds = Tone.Time("16n").toSeconds();
 
     style.progression.forEach((chordSpec, barIdx) => {
       const nextChord = style.progression[(barIdx + 1) % style.progression.length];
@@ -73,32 +76,32 @@ export class DrumlessEngine {
         time: `${barIdx}:0:0`,
         type: "marker",
         notes: [],
-        duration: "0",
+        duration: 0,
         velocity: 0,
         bar: barIdx,
         label: chordSpec.label,
       });
 
       for (const s of bassSteps) {
-        const beat = Math.floor(s.step / 4);
-        const sixteenth = s.step % 4;
+        const step = scaleStep(s.step, meter.stepsPerBar);
+        const duration = scaleDurationSixteenths(s.duration, meter.stepsPerBar) * sixteenthSeconds;
         events.push({
-          time: `${barIdx}:${beat}:${sixteenth}`,
+          time: `${barIdx}:0:${step}`,
           type: "bass",
           notes: [bassNoteString(keyRoot, chordSpec, style.bassOctave, s.semitone)],
-          duration: s.duration,
+          duration,
           velocity: s.velocity,
         });
       }
 
       for (const s of compSteps) {
-        const beat = Math.floor(s.step / 4);
-        const sixteenth = s.step % 4;
+        const step = scaleStep(s.step, meter.stepsPerBar);
+        const duration = scaleDurationSixteenths(s.duration, meter.stepsPerBar) * sixteenthSeconds;
         events.push({
-          time: `${barIdx}:${beat}:${sixteenth}`,
+          time: `${barIdx}:0:${step}`,
           type: "chord",
           notes: chordNoteStrings(keyRoot, chordSpec, style.chordOctave),
-          duration: s.duration,
+          duration,
           velocity: s.velocity,
         });
       }
@@ -107,16 +110,30 @@ export class DrumlessEngine {
     return events;
   }
 
+  private buildMetronomeEvents(meter: MeterOption) {
+    const events: { time: string; accent: boolean }[] = [];
+    let offset = 0;
+    for (const group of meter.pulseGroups) {
+      events.push({ time: `0:0:${offset}`, accent: offset === 0 });
+      offset += group;
+    }
+    return events;
+  }
+
   async play(style: Style, keyRoot: NoteName, tempo: number, options: PlayOptions) {
     await this.init();
     this.stop();
 
+    const meter = options.meter ?? DEFAULT_METER;
+
     Tone.getTransport().bpm.value = tempo;
+    Tone.getTransport().timeSignature = meter.transportTimeSignature;
     Tone.getTransport().swing = style.swing;
     Tone.getTransport().swingSubdivision = style.swingSubdivision as Tone.Unit.Subdivision;
 
-    const events = this.buildEvents(style, keyRoot);
+    const events = this.buildEvents(style, keyRoot, meter);
     const bars = style.progression.length;
+    const startTime = options.countIn ? "1m" : 0;
 
     this.part = new Tone.Part((time, value) => {
       if (value.type === "bass") {
@@ -128,28 +145,27 @@ export class DrumlessEngine {
           options.onChordChange?.(value.bar ?? 0, value.label ?? "");
         }, time);
       }
-    }, events).start(options.countIn ? "1m" : 0);
+    }, events).start(startTime);
     this.part.loop = true;
     this.part.loopStart = 0;
     this.part.loopEnd = `${bars}m`;
 
     this.metronomeEnabled = options.metronome;
-    this.metronomeLoop = new Tone.Loop((time) => {
+    this.metronomePart = new Tone.Part((time, value) => {
       if (this.metronomeEnabled) {
-        this.clickSynth?.triggerAttackRelease("G3", "16n", time, 0.5);
+        this.clickSynth?.triggerAttackRelease(value.accent ? "C5" : "G3", "16n", time, value.accent ? 0.9 : 0.5);
       }
-    }, "4n").start(options.countIn ? "1m" : 0);
+    }, this.buildMetronomeEvents(meter)).start(startTime);
+    this.metronomePart.loop = true;
+    this.metronomePart.loopStart = 0;
+    this.metronomePart.loopEnd = "1m";
 
     if (options.countIn) {
-      let count = 0;
-      this.countInEventId = Tone.getTransport().scheduleRepeat((time) => {
-        this.clickSynth?.triggerAttackRelease(count % 4 === 0 ? "C5" : "G4", "16n", time, 0.9);
-        count++;
-        if (count >= 4 && this.countInEventId !== null) {
-          Tone.getTransport().clear(this.countInEventId);
-          this.countInEventId = null;
-        }
-      }, "4n", 0);
+      for (const ev of this.buildMetronomeEvents(meter)) {
+        Tone.getTransport().scheduleOnce((time) => {
+          this.clickSynth?.triggerAttackRelease(ev.accent ? "C5" : "G4", "16n", time, 0.9);
+        }, ev.time);
+      }
     }
 
     Tone.getTransport().start();
@@ -166,9 +182,8 @@ export class DrumlessEngine {
     transport.cancel();
     this.part?.dispose();
     this.part = null;
-    this.metronomeLoop?.dispose();
-    this.metronomeLoop = null;
-    this.countInEventId = null;
+    this.metronomePart?.dispose();
+    this.metronomePart = null;
   }
 
   async startRecording() {

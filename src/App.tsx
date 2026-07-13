@@ -3,6 +3,7 @@ import "./App.css";
 import { DrumlessEngine } from "./audio/engine";
 import { KEYS, type NoteName } from "./music/theory";
 import { listStyles } from "./music/styles";
+import { DEFAULT_METER, METERS, findMeter } from "./music/meter";
 
 const STYLES = listStyles();
 
@@ -14,6 +15,8 @@ function App() {
   const style = useMemo(() => STYLES.find((s) => s.id === styleId)!, [styleId]);
 
   const [keyRoot, setKeyRoot] = useState<NoteName>("C");
+  const [meterId, setMeterId] = useState(DEFAULT_METER.id);
+  const meter = useMemo(() => findMeter(meterId), [meterId]);
   const [tempo, setTempo] = useState(style.defaultTempo);
   const [metronome, setMetronome] = useState(false);
   const [countIn, setCountIn] = useState(true);
@@ -32,7 +35,7 @@ function App() {
       stopPlayback();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [styleId, keyRoot]);
+  }, [styleId, keyRoot, meterId]);
 
   useEffect(() => {
     engineRef.current?.setMetronome(metronome);
@@ -51,6 +54,7 @@ function App() {
       await engineRef.current!.play(style, keyRoot, tempo, {
         metronome,
         countIn,
+        meter,
         onChordChange: (bar, label) => {
           setCurrentBar(bar);
           setCurrentLabel(label);
@@ -135,6 +139,17 @@ function App() {
           </label>
 
           <label className="control-row">
+            <span>Meter</span>
+            <select value={meterId} onChange={(e) => setMeterId(e.target.value)}>
+              {METERS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="control-row">
             <span>Tempo</span>
             <input
               type="range"
@@ -157,7 +172,8 @@ function App() {
           </label>
 
           <div className="loop-info">
-            {style.progression.length}-bar loop &middot; {style.progression.map((c) => c.label).join(" – ")}
+            {style.progression.length}-bar loop in {meter.label} &middot;{" "}
+            {style.progression.map((c) => c.label).join(" – ")}
           </div>
         </section>
 
