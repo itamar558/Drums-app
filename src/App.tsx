@@ -4,6 +4,7 @@ import { DrumlessEngine, type RecordMode } from "./audio/engine";
 import { KEYS, type NoteName } from "./music/theory";
 import { listStyles } from "./music/styles";
 import { DEFAULT_METER, METERS, findMeter } from "./music/meter";
+import { exportAudioFile } from "./native/exportFile";
 
 const STYLES = listStyles();
 
@@ -102,14 +103,8 @@ function App() {
     setIsRecording(false);
     if (!blob) return;
     const suffix = RECORD_MODES.find((m) => m.id === recordMode)!.suffix;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${style.name.replace(/\s+/g, "-").toLowerCase()}-${keyRoot}-${tempo}bpm-${suffix}.wav`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    const filename = `${style.name.replace(/\s+/g, "-").toLowerCase()}-${keyRoot}-${tempo}bpm-${suffix}.wav`;
+    await exportAudioFile(blob, filename);
   }
 
   return (
