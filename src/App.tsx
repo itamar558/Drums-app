@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import { DrumlessEngine } from "./audio/engine";
+import { DrumlessEngine, type RecordMode } from "./audio/engine";
 import { KEYS, type NoteName } from "./music/theory";
 import { listStyles } from "./music/styles";
 import { DEFAULT_METER, METERS, findMeter } from "./music/meter";
 
 const STYLES = listStyles();
+
+const RECORD_MODES: { id: RecordMode; label: string; suffix: string }[] = [
+  { id: "playback", label: "Playback only", suffix: "playback" },
+  { id: "click", label: "Click only", suffix: "click" },
+  { id: "both", label: "Click + Playback", suffix: "click+playback" },
+];
 
 function App() {
   const engineRef = useRef<DrumlessEngine | null>(null);
@@ -20,6 +26,7 @@ function App() {
   const [tempo, setTempo] = useState(style.defaultTempo);
   const [metronome, setMetronome] = useState(false);
   const [countIn, setCountIn] = useState(true);
+  const [recordMode, setRecordMode] = useState<RecordMode>("playback");
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [currentBar, setCurrentBar] = useState<number | null>(null);
@@ -76,9 +83,14 @@ function App() {
     }
   }
 
+  function selectRecordMode(mode: RecordMode) {
+    setRecordMode(mode);
+    if (mode !== "playback") setMetronome(true);
+  }
+
   async function toggleRecording() {
     if (!isRecording) {
-      await engineRef.current!.startRecording();
+      await engineRef.current!.startRecording(recordMode);
       setIsRecording(true);
     } else {
       await finishRecording();
@@ -89,10 +101,11 @@ function App() {
     const blob = await engineRef.current!.stopRecording();
     setIsRecording(false);
     if (!blob) return;
+    const suffix = RECORD_MODES.find((m) => m.id === recordMode)!.suffix;
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${style.name.replace(/\s+/g, "-").toLowerCase()}-${keyRoot}-${tempo}bpm.wav`;
+    a.download = `${style.name.replace(/\s+/g, "-").toLowerCase()}-${keyRoot}-${tempo}bpm-${suffix}.wav`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -210,7 +223,25 @@ function App() {
               {isRecording ? "Stop & Download" : "Record"}
             </button>
           </div>
-          <p className="hint">Record captures the loop as a WAV file you can keep and reuse.</p>
+
+          <label className="control-row record-mode">
+            <span>Export</span>
+            <select
+              value={recordMode}
+              disabled={isRecording}
+              onChange={(e) => selectRecordMode(e.target.value as RecordMode)}
+            >
+              {RECORD_MODES.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="hint">
+            The click lives on its own channel, separate from the backing track. Export the click alone as a
+            reference while you record real drums, the playback alone, or both mixed together.
+          </p>
         </section>
       </main>
 

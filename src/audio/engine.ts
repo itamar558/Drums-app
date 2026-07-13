@@ -11,14 +11,21 @@ interface PlayOptions {
   onChordChange?: (barIndex: number, label: string) => void;
 }
 
+export type RecordMode = "playback" | "click" | "both";
+
 /** Drives Tone.js playback of a generated drumless backing track. */
 export class DrumlessEngine {
   private bassSynth: Tone.MonoSynth | null = null;
   private chordSynth: Tone.PolySynth<Tone.Synth> | null = null;
   private clickSynth: Tone.MembraneSynth | null = null;
+  private musicBus: Tone.Gain | null = null;
+  private clickBus: Tone.Gain | null = null;
   private part: Tone.Part | null = null;
   private metronomePart: Tone.Part | null = null;
-  private recorder: Tone.Recorder | null = null;
+  private playbackRecorder: Tone.Recorder | null = null;
+  private clickRecorder: Tone.Recorder | null = null;
+  private bothRecorder: Tone.Recorder | null = null;
+  private activeRecordMode: RecordMode = "playback";
   private ready = false;
   private metronomeEnabled = false;
 
@@ -26,7 +33,21 @@ export class DrumlessEngine {
     if (this.ready) return;
     await Tone.start();
 
-    const bassFilter = new Tone.Filter({ frequency: 900, type: "lowpass" }).toDestination();
+    // Music (bass + chords) and the metronome click live on separate buses so
+    // each can be recorded independently, or summed together.
+    this.musicBus = new Tone.Gain().toDestination();
+    this.clickBus = new Tone.Gain().toDestination();
+
+    // Chrome's MediaRecorder truncates stretches of bit-for-bit digital
+    // silence when capturing a MediaStreamAudioDestinationNode, which chops
+    // up a click-only recording since the gaps between clicks are silent.
+    // An inaudible noise floor keeps each bus's signal technically nonzero.
+    const keepAlive = new Tone.Noise({ type: "white", volume: -95 });
+    keepAlive.connect(this.musicBus);
+    keepAlive.connect(this.clickBus);
+    keepAlive.start();
+
+    const bassFilter = new Tone.Filter({ frequency: 900, type: "lowpass" }).connect(this.musicBus);
     this.bassSynth = new Tone.MonoSynth({
       oscillator: { type: "triangle" },
       envelope: { attack: 0.01, decay: 0.15, sustain: 0.4, release: 0.3 },
@@ -34,7 +55,7 @@ export class DrumlessEngine {
       volume: -6,
     }).connect(bassFilter);
 
-    const chordReverb = new Tone.Reverb({ decay: 1.8, wet: 0.18 }).toDestination();
+    const chordReverb = new Tone.Reverb({ decay: 1.8, wet: 0.18 }).connect(this.musicBus);
     this.chordSynth = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: "fatsawtooth", count: 3, spread: 20 },
       envelope: { attack: 0.02, decay: 0.3, sustain: 0.5, release: 0.6 },
@@ -46,10 +67,15 @@ export class DrumlessEngine {
       octaves: 2,
       envelope: { attack: 0.001, decay: 0.15, sustain: 0 },
       volume: -10,
-    }).toDestination();
+    }).connect(this.clickBus);
 
-    this.recorder = new Tone.Recorder();
-    Tone.getDestination().connect(this.recorder);
+    this.playbackRecorder = new Tone.Recorder();
+    this.clickRecorder = new Tone.Recorder();
+    this.bothRecorder = new Tone.Recorder();
+    this.musicBus.connect(this.playbackRecorder);
+    this.musicBus.connect(this.bothRecorder);
+    this.clickBus.connect(this.clickRecorder);
+    this.clickBus.connect(this.bothRecorder);
 
     this.ready = true;
   }
@@ -186,20 +212,28 @@ export class DrumlessEngine {
     this.metronomePart = null;
   }
 
-  async startRecording() {
+  private recorderFor(mode: RecordMode): Tone.Recorder | null {
+    if (mode === "playback") return this.playbackRecorder;
+    if (mode === "click") return this.clickRecorder;
+    return this.bothRecorder;
+  }
+
+  async startRecording(mode: RecordMode) {
     await this.init();
-    this.recorder?.start();
+    this.activeRecordMode = mode;
+    this.recorderFor(mode)?.start();
   }
 
   async stopRecording(): Promise<Blob | null> {
-    if (!this.recorder) return null;
-    const raw = await this.recorder.stop();
+    const recorder = this.recorderFor(this.activeRecordMode);
+    if (!recorder) return null;
+    const raw = await recorder.stop();
     const arrayBuffer = await raw.arrayBuffer();
     const audioBuffer = await Tone.getContext().rawContext.decodeAudioData(arrayBuffer);
     return audioBufferToWav(audioBuffer);
   }
 
   get isRecording() {
-    return this.recorder?.state === "started";
+    return this.recorderFor(this.activeRecordMode)?.state === "started";
   }
 }

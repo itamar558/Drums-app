@@ -98,27 +98,32 @@
   line-height: 1.35;
 }
 
-.controls .control-row {
+.control-row {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
 }
 
-.controls .control-row > span:first-child {
+.control-row > span:first-child {
   width: 60px;
   flex-shrink: 0;
   font-size: 14px;
   color: var(--text);
 }
 
-.controls select {
+.control-row select {
   flex: 1;
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-h);
+}
+
+.control-row select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .controls input[type="range"] {
