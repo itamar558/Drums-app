@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import { DrumlessEngine, type RecordMode } from "./audio/engine";
+import { CLICK_SOUNDS, DrumlessEngine, type ClickSound, type RecordMode } from "./audio/engine";
 import { KEYS, type NoteName } from "./music/theory";
 import { listStyles } from "./music/styles";
 import { DEFAULT_METER, METERS, findMeter } from "./music/meter";
@@ -26,6 +26,7 @@ function App() {
   const meter = useMemo(() => findMeter(meterId), [meterId]);
   const [tempo, setTempo] = useState(style.defaultTempo);
   const [metronome, setMetronome] = useState(false);
+  const [clickSound, setClickSound] = useState<ClickSound>("click");
   const [countIn, setCountIn] = useState(true);
   const [recordMode, setRecordMode] = useState<RecordMode>("playback");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -48,6 +49,10 @@ function App() {
   useEffect(() => {
     engineRef.current?.setMetronome(metronome);
   }, [metronome]);
+
+  useEffect(() => {
+    engineRef.current?.setClickSound(clickSound);
+  }, [clickSound]);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -172,6 +177,17 @@ function App() {
           <label className="control-row checkbox">
             <input type="checkbox" checked={metronome} onChange={(e) => setMetronome(e.target.checked)} />
             <span>Metronome click</span>
+          </label>
+
+          <label className="control-row">
+            <span>Click</span>
+            <select value={clickSound} onChange={(e) => setClickSound(e.target.value as ClickSound)}>
+              {CLICK_SOUNDS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label className="control-row checkbox">

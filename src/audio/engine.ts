@@ -13,6 +13,16 @@ interface PlayOptions {
 
 export type RecordMode = "playback" | "click" | "both";
 
+export type ClickSound = "click" | "beep" | "woodblock" | "cowbell" | "hihat";
+
+export const CLICK_SOUNDS: { id: ClickSound; label: string }[] = [
+  { id: "click", label: "Click" },
+  { id: "beep", label: "Beep" },
+  { id: "woodblock", label: "Woodblock" },
+  { id: "cowbell", label: "Cowbell" },
+  { id: "hihat", label: "Hi-Hat" },
+];
+
 type PluckTone = { attackNoise: number; dampening: number; resonance: number };
 
 const BASS_TONE_PARAMS: Record<BassTone, PluckTone> = {
@@ -64,7 +74,8 @@ class GuitarVoices {
 export class DrumlessEngine {
   private musicBus: Tone.Gain | null = null;
   private clickBus: Tone.Gain | null = null;
-  private clickSynth: Tone.MembraneSynth | null = null;
+  private clickTriggers: Partial<Record<ClickSound, (time: number, accent: boolean) => void>> = {};
+  private clickSound: ClickSound = "click";
 
   private keysPiano: Tone.PolySynth<Tone.FMSynth> | null = null;
   private keysOrgan: Tone.PolySynth<Tone.Synth> | null = null;
@@ -131,12 +142,54 @@ export class DrumlessEngine {
       volume: -13,
     }).connect(hornsReverb);
 
-    this.clickSynth = new Tone.MembraneSynth({
+    const clickMembrane = new Tone.MembraneSynth({
       pitchDecay: 0.008,
       octaves: 2,
       envelope: { attack: 0.001, decay: 0.15, sustain: 0 },
       volume: -10,
     }).connect(this.clickBus);
+
+    const clickBeep = new Tone.Synth({
+      oscillator: { type: "sine" },
+      envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.05 },
+      volume: -10,
+    }).connect(this.clickBus);
+
+    const clickWoodblock = new Tone.PluckSynth({
+      attackNoise: 4,
+      dampening: 6500,
+      resonance: 0.15,
+    }).connect(this.clickBus);
+
+    const clickCowbell = new Tone.MetalSynth({
+      harmonicity: 5.1,
+      modulationIndex: 32,
+      resonance: 4000,
+      octaves: 1.5,
+      envelope: { attack: 0.001, decay: 0.2, release: 0.1 },
+      volume: -20,
+    }).connect(this.clickBus);
+
+    const hihatFilter = new Tone.Filter({ frequency: 8000, type: "highpass" }).connect(this.clickBus);
+    const clickHihat = new Tone.NoiseSynth({
+      noise: { type: "white" },
+      envelope: { attack: 0.001, decay: 0.045, sustain: 0 },
+      volume: -12,
+    }).connect(hihatFilter);
+
+    this.clickTriggers = {
+      click: (time, accent) =>
+        clickMembrane.triggerAttackRelease(accent ? "C5" : "G3", "16n", time, accent ? 0.9 : 0.5),
+      beep: (time, accent) => clickBeep.triggerAttackRelease(accent ? "A5" : "A4", "16n", time, accent ? 0.9 : 0.6),
+      woodblock: (time, accent) => {
+        clickWoodblock.volume.setValueAtTime(accent ? -2 : -9, time);
+        clickWoodblock.triggerAttack(accent ? "C6" : "G5", time);
+        clickWoodblock.triggerRelease(time + 0.05);
+      },
+      cowbell: (time, accent) =>
+        clickCowbell.triggerAttackRelease(accent ? "G4" : "D4", "16n", time, accent ? 0.9 : 0.55),
+      hihat: (time, accent) => clickHihat.triggerAttackRelease("16n", time, accent ? 0.9 : 0.5),
+    };
 
     this.playbackRecorder = new Tone.Recorder();
     this.clickRecorder = new Tone.Recorder();
@@ -298,7 +351,7 @@ export class DrumlessEngine {
     this.metronomeEnabled = options.metronome;
     this.metronomePart = new Tone.Part((time, value) => {
       if (this.metronomeEnabled) {
-        this.clickSynth?.triggerAttackRelease(value.accent ? "C5" : "G3", "16n", time, value.accent ? 0.9 : 0.5);
+        this.clickTriggers[this.clickSound]?.(time, value.accent);
       }
     }, this.buildMetronomeEvents(meter)).start(startTime);
     this.metronomePart.loop = true;
@@ -308,7 +361,7 @@ export class DrumlessEngine {
     if (options.countIn) {
       for (const ev of this.buildMetronomeEvents(meter)) {
         Tone.getTransport().scheduleOnce((time) => {
-          this.clickSynth?.triggerAttackRelease(ev.accent ? "C5" : "G4", "16n", time, 0.9);
+          this.clickTriggers[this.clickSound]?.(time, ev.accent);
         }, ev.time);
       }
     }
@@ -318,6 +371,10 @@ export class DrumlessEngine {
 
   setMetronome(enabled: boolean) {
     this.metronomeEnabled = enabled;
+  }
+
+  setClickSound(sound: ClickSound) {
+    this.clickSound = sound;
   }
 
   stop() {
